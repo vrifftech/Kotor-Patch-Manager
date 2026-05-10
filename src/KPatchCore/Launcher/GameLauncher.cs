@@ -50,7 +50,7 @@ public static class GameLauncher
         }
 
         // Detect game version to determine distribution
-        var versionResult = GameDetector.DetectVersion(gameExePath);
+        var versionResult = GameDetector.DetectVersion(gameExePath, allowManagedInstallState: true);
         var distribution = versionResult.Data?.Distribution ?? Distribution.Other;
 
         return LaunchWithInjection(gameExePath, patcherDllPath, distribution, commandLineArgs);

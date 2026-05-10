@@ -126,7 +126,7 @@ class Program
 
             // Detect game version to determine distribution (Steam, GOG, etc.)
             Console.WriteLine("Detecting game version...");
-            var versionResult = GameDetector.DetectVersion(gameExePath);
+            var versionResult = GameDetector.DetectVersion(gameExePath, allowManagedInstallState: true);
             var distribution = Distribution.Other;  // Default fallback
 
             if (versionResult.Success && versionResult.Data != null)
