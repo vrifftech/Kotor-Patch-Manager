@@ -74,7 +74,15 @@
         <Style Selector="CheckBox">
             <Setter Property="Foreground" Value="{DynamicResource PrimaryBrush}"/>
         </Style>
-
+        <Style Selector="CheckBox:checked">
+            <Setter Property="Foreground" Value="{DynamicResource PrimaryBrush}"/>
+        </Style>
+        <Style Selector="CheckBox:indeterminate">
+            <Setter Property="Foreground" Value="{DynamicResource PrimaryBrush}"/>
+        </Style>
+        <Style Selector="CheckBox:pointerover">
+            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+        </Style>
         <Style Selector="ListBox">
             <Setter Property="Background" Value="{DynamicResource BackgroundBrush}"/>
             <Setter Property="Foreground" Value="{DynamicResource PrimaryBrush}"/>
@@ -150,6 +158,16 @@
                                FontWeight="Bold"
                                FontSize="14"
                                Margin="0,0,0,8"/>
+
+                    <CheckBox DockPanel.Dock="Top"
+                              IsThreeState="True"
+                              IsChecked="{Binding SelectAllPatches}"
+                              IsEnabled="{Binding HasVisiblePatches}"
+                              Foreground="{DynamicResource PrimaryBrush}"
+                              Margin="0,0,0,8">
+                        <TextBlock Text="Select All"
+                                   Foreground="{DynamicResource PrimaryBrush}"/>
+                    </CheckBox>
 
                     <ListBox ItemsSource="{Binding VisiblePatches}"
                              SelectedItem="{Binding SelectedPatch}"

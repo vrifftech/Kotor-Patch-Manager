@@ -18,6 +18,16 @@ public class AppSettings
     public string PatchesPath { get; set; } = string.Empty;
 
     /// <summary>
+    /// Last directory used by the game executable picker. Kept separate from the patches picker.
+    /// </summary>
+    public string LastGameBrowseDirectory { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Last directory used by the patches directory picker. Kept separate from the game picker.
+    /// </summary>
+    public string LastPatchesBrowseDirectory { get; set; } = string.Empty;
+
+    /// <summary>
     /// List of checked patch IDs
     /// </summary>
     public List<string> CheckedPatchIds { get; set; } = new();

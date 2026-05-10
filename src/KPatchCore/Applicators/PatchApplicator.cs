@@ -122,7 +122,10 @@ public class PatchApplicator
 
             // Step 2: Detect game version
             messages.Add("Step 2/7: Detecting game version...");
-            var versionResult = GameDetector.DetectVersion(options.GameExePath);
+            var versionResult = GameDetector.DetectVersion(
+                options.GameExePath,
+                allowManagedInstallState: true,
+                requireKnownManagedStateHash: true);
             if (!versionResult.Success || versionResult.Data == null)
             {
                 return new InstallResult
@@ -134,7 +137,14 @@ public class PatchApplicator
             }
 
             var gameVersion = versionResult.Data;
-            messages.Add($"  Detected: {gameVersion.DisplayName}");
+            if (versionResult.Messages.Count > 0)
+            {
+                messages.AddRange(versionResult.Messages.Select(m => $"  {m}"));
+            }
+            else
+            {
+                messages.Add($"  Detected: {gameVersion.DisplayName}");
+            }
 
             // Step 3: Load and validate patches
             messages.Add("Step 3/7: Loading and validating patches...");
@@ -199,8 +209,33 @@ public class PatchApplicator
                 };
             }
 
-            // Check for hook conflicts
-            var hooksByPatch = patchEntries.ToDictionary(kv => kv.Key, kv => kv.Value.Hooks);
+            // Load version-specific hooks before validating or applying anything.
+            // PatchEntry.Hooks is populated during repository scan and is intentionally not
+            // version-specific; using it here causes multi-version static patches to always
+            // use whichever hooks file appears first in the archive.
+            var hooksByPatch = new Dictionary<string, List<Hook>>();
+            foreach (var patchId in options.PatchIds)
+            {
+                var hooksResult = _repository.LoadHooksForVersion(patchId, gameVersion.Hash);
+                if (!hooksResult.Success || hooksResult.Data == null)
+                {
+                    return new InstallResult
+                    {
+                        Success = false,
+                        Error = $"Failed to load hooks for {patchId}: {hooksResult.Error}",
+                        DetectedVersion = gameVersion,
+                        Messages = messages
+                    };
+                }
+
+                hooksByPatch[patchId] = hooksResult.Data;
+                foreach (var message in hooksResult.Messages)
+                {
+                    messages.Add($"  {patchId}: {message}");
+                }
+            }
+
+            // Check for hook conflicts using only hooks that apply to the detected version.
             var hookConflictResult = HookValidator.ValidateMultiPatchHooks(hooksByPatch);
             if (!hookConflictResult.Success)
             {
@@ -261,12 +296,12 @@ public class PatchApplicator
             // Step 4.5: Apply STATIC hooks to executable
             messages.Add("Step 4.5/8: Applying static hooks...");
 
-            // Collect all static hooks from all patches
+            // Collect all static hooks from all patches for the detected game version.
             var allStaticHooks = new List<Hook>();
             foreach (var patchId in installOrder)
             {
-                var entry = patchEntries[patchId];
-                var staticHooks = entry.Hooks.Where(h => h.Type == HookType.Static).ToList();
+                var hooks = hooksByPatch[patchId];
+                var staticHooks = hooks.Where(h => h.Type == HookType.Static).ToList();
 
                 if (staticHooks.Count > 0)
                 {
@@ -318,9 +353,9 @@ public class PatchApplicator
             var extractedDlls = new Dictionary<string, string>();
             foreach (var patchId in installOrder)
             {
-                var entry = patchEntries[patchId];
-                var hasDetourHooks = entry.Hooks.Any(h => h.Type == HookType.Detour);
-                var hasDllOnlyPatch = entry.Hooks.Count == 0; // DLL-only patch (no hooks)
+                var hooks = hooksByPatch[patchId];
+                var hasDetourHooks = hooks.Any(h => h.Type == HookType.Detour);
+                var hasDllOnlyPatch = hooks.Count == 0; // DLL-only patch (no hooks)
 
                 // Try to extract DLL if it exists (supports DETOUR hooks and DLL-only patches)
                 var extractResult = _repository.ExtractPatchDll(patchId, patchesDir);
@@ -366,8 +401,8 @@ public class PatchApplicator
                     }
                     else
                     {
-                        // SIMPLE patch - no DLL required
-                        messages.Add($"  Skipped: {patchId} (SIMPLE patch, no DLL)");
+                        // SIMPLE, REPLACE, or STATIC-only patch - no DLL required
+                        messages.Add($"  Skipped: {patchId} (no DLL required for selected hooks)");
                     }
                 }
             }
@@ -381,28 +416,7 @@ public class PatchApplicator
 
             foreach (var patchId in installOrder)
             {
-                // Load version-specific hooks for this patch
-                var hooksResult = _repository.LoadHooksForVersion(patchId, gameVersion.Hash);
-                if (!hooksResult.Success || hooksResult.Data == null)
-                {
-                    // Cleanup on failure
-                    if (backup != null)
-                    {
-                        BackupManager.RestoreBackup(backup);
-                    }
-
-                    return new InstallResult
-                    {
-                        Success = false,
-                        Error = $"Failed to load hooks for {patchId}: {hooksResult.Error}",
-                        DetectedVersion = gameVersion,
-                        Backup = backup,
-                        Messages = messages
-                    };
-                }
-
-                var hooks = hooksResult.Data;
-                messages.Add($"  {patchId}: {hooksResult.Data}");
+                var hooks = hooksByPatch[patchId];
 
                 // Get DLL path if this patch has DETOUR hooks, otherwise use empty string
                 var dllPath = extractedDlls.ContainsKey(patchId)
@@ -559,6 +573,19 @@ public class PatchApplicator
             {
                 messages.Add($"  ⚠️ Warning: KotorPatcher.dll path not provided");
                 messages.Add($"  ⚠️ Make sure KotorPatcher.dll and sqlite3.dll are in game directory");
+            }
+
+            var stateResult = InstallStateManager.SaveOrUpdate(
+                options.GameExePath,
+                gameVersion,
+                installOrder);
+            if (stateResult.Success)
+            {
+                messages.Add($"  {stateResult.Messages.FirstOrDefault() ?? "Managed install state saved"}");
+            }
+            else
+            {
+                messages.Add($"  ⚠️ Warning: Failed to save managed install state: {stateResult.Error}");
             }
 
             return new InstallResult

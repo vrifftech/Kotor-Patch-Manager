@@ -1,5 +1,8 @@
 using KPatchCore.Common;
+using KPatchCore.Managers;
 using KPatchCore.Models;
+using Tomlyn;
+using Tomlyn.Model;
 
 namespace KPatchCore.Applicators;
 
@@ -61,8 +64,9 @@ public static class PatchRemover
     /// Removes all patches from a game installation
     /// </summary>
     /// <param name="gameExePath">Path to the game executable</param>
+    /// <param name="removeManagedState">Whether to remove KPM's managed install identity file.</param>
     /// <returns>Removal result</returns>
-    public static RemovalResult RemoveAllPatches(string gameExePath)
+    public static RemovalResult RemoveAllPatches(string gameExePath, bool removeManagedState = true)
     {
         var messages = new List<string>();
         var removedFiles = new List<string>();
@@ -158,7 +162,7 @@ public static class PatchRemover
             }
 
             // List of files to remove from game directory
-            var filesToRemove = new[]
+            var filesToRemove = new List<string>
             {
                 "patch_config.toml",
                 "KotorPatcher.dll",
@@ -172,6 +176,11 @@ public static class PatchRemover
                 "addresses.db",
                 "sqlite3.dll"
             };
+
+            if (removeManagedState)
+            {
+                filesToRemove.Add(InstallStateManager.StateFileName);
+            }
 
             // Remove each file using safe delete helper
             foreach (var fileName in filesToRemove)
@@ -286,6 +295,35 @@ public static class PatchRemover
         }
     }
 
+    private static List<string> ReadInstalledPatchIdsFromConfig(string configPath)
+    {
+        try
+        {
+            var model = Toml.ToModel(File.ReadAllText(configPath));
+            if (model is not TomlTable table ||
+                !table.TryGetValue("patches", out var patchesValue) ||
+                patchesValue is not TomlTableArray patchesArray)
+            {
+                return new List<string>();
+            }
+
+            return patchesArray
+                .OfType<TomlTable>()
+                .Select(patchTable =>
+                    patchTable.TryGetValue("id", out var idValue)
+                        ? idValue?.ToString()
+                        : null)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => id!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch
+        {
+            return new List<string>();
+        }
+    }
+
     /// <summary>
     /// Gets information about installed patches
     /// </summary>
@@ -311,6 +349,27 @@ public static class PatchRemover
                 GameExePath = gameExePath
             };
 
+            // Check for config file first. For the selected game directory, patch_config.toml
+            // is the source of truth for installed patch IDs. Managed state and backup metadata
+            // remain fallbacks for older or partially managed installs that do not have a config.
+            var configPath = Path.Combine(gameDir, "patch_config.toml");
+            info.HasConfig = File.Exists(configPath);
+            if (info.HasConfig)
+            {
+                info.ConfigPath = configPath;
+                info.InstalledPatches = ReadInstalledPatchIdsFromConfig(configPath);
+            }
+
+            if (!info.HasConfig)
+            {
+                // Prefer explicit KPM managed state for the installed patch list when no config exists.
+                var stateResult = InstallStateManager.Load(gameExePath);
+                if (stateResult.Success && stateResult.Data != null)
+                {
+                    info.InstalledPatches = stateResult.Data.InstalledPatches;
+                }
+            }
+
             // Check for backup
             var backupResult = BackupManager.FindLatestBackup(gameExePath);
             if (backupResult.Success && backupResult.Data != null)
@@ -318,7 +377,10 @@ public static class PatchRemover
                 info.HasBackup = true;
                 info.BackupPath = backupResult.Data.BackupPath;
                 info.BackupDate = backupResult.Data.CreatedAt;
-                info.InstalledPatches = backupResult.Data.InstalledPatches;
+                if (!info.HasConfig && info.InstalledPatches.Count == 0)
+                {
+                    info.InstalledPatches = backupResult.Data.InstalledPatches;
+                }
             }
 
             // Check for patches directory
@@ -330,14 +392,6 @@ public static class PatchRemover
                     .Where(name => name != null)
                     .Cast<string>()
                     .ToList();
-            }
-
-            // Check for config file
-            var configPath = Path.Combine(gameDir, "patch_config.toml");
-            info.HasConfig = File.Exists(configPath);
-            if (info.HasConfig)
-            {
-                info.ConfigPath = configPath;
             }
 
             // Check for launcher
@@ -378,7 +432,7 @@ public static class PatchRemover
         public DateTime? BackupDate { get; set; }
 
         /// <summary>
-        /// List of installed patch IDs (from backup metadata)
+        /// List of installed patch IDs. Prefer patch_config.toml; fallback to managed state or backup metadata.
         /// </summary>
         public List<string> InstalledPatches { get; set; } = new();
 
