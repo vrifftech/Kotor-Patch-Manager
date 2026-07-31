@@ -1,0 +1,39 @@
+[metadata]
+target_versions = ["777BEE235A9E8BDD9863F6741BC3AC54BB6A113B62B1D2E4D12BBE6DB963A914"]
+
+# KOTOR2 GOG/Aspyr Windows voice WAV fix
+#
+# Function: CExoStreamingSoundSourceInternal::InitializeSource equivalent
+# Problem: In the _g_bModifiedSound-enabled type-4/WAV streaming branch,
+#          the code accepts a file that starts with "RIFF" at offset 0, but
+#          still subtracts 0x1D6 from the length and seeks to 0x1D6 before
+#          calling AIL_open_stream(... .wav). That corrupts normal WAV files.
+#
+# Correct behavior, matching LegacyPC/Linux/macOS logic:
+#   - RIFF at offset 0    -> length = full file length, seek offset = 0
+#   - RIFF at offset 1D6  -> length = file length - 0x1D6, seek offset = 0x1D6
+#
+#
+# Validated for GOG Aspyr:
+#   SHA-256:    777BEE235A9E8BDD9863F6741BC3AC54BB6A113B62B1D2E4D12BBE6DB963A914
+#   file offset: 0x0023B86E
+#   VA:          0x0063C46E
+#   original:    sub eax, 0x1D6
+#   replacement: nop * 5, leaving EAX as full file length
+[[hooks]]
+address = 0x0063C46E
+type = "simple"
+original_bytes = [0x2D, 0xD6, 0x01, 0x00, 0x00]
+replacement_bytes = [0x90, 0x90, 0x90, 0x90, 0x90]
+
+# Validated for GOG Aspyr:
+#   SHA-256:    777BEE235A9E8BDD9863F6741BC3AC54BB6A113B62B1D2E4D12BBE6DB963A914
+#   file offset: 0x0023B87B
+#   VA:          0x0063C47B
+#   original:    push 0x1D6
+#   replacement: push 0
+[[hooks]]
+address = 0x0063C47B
+type = "simple"
+original_bytes = [0x68, 0xD6, 0x01, 0x00, 0x00]
+replacement_bytes = [0x68, 0x00, 0x00, 0x00, 0x00]
